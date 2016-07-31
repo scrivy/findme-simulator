@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"log"
+	"os"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/websocket"
@@ -20,22 +24,43 @@ type location struct {
 }
 
 func main() {
-	n := 50
-	for i := 0; i < n; i++ {
-		time.Sleep(time.Duration(1000/n) * time.Millisecond)
-		go connectAndSendUpdates()
+	var txCount, rxCount, txTotal, rxTotal uint64
+
+	var n int
+	if len(os.Args) == 2 {
+		num, err := strconv.Atoi(os.Args[1])
+		if err != nil {
+			log.Fatal("couldn't parse 2nd arg: ", err)
+		}
+		n = num
+	} else {
+		n = 100
 	}
 
-	ticker := time.NewTicker(5 * time.Second)
+	for i := 0; i < n; i++ {
+		time.Sleep(time.Duration(1000/n) * time.Millisecond)
+		go connectAndSendUpdates(&txCount, &rxCount)
+	}
+
+	var interval uint64
+	interval = 5
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	for {
 		select {
 		case <-ticker.C:
-			log.Println("say something about performance")
+			txNewTotal := atomic.LoadUint64(&txCount)
+			rxNewTotal := atomic.LoadUint64(&rxCount)
+			log.Printf(
+				"\n%6d tx msg / sec\n%6d rx msg / sec",
+				(txNewTotal-txTotal)/interval,
+				(rxNewTotal-rxTotal)/interval)
+			txTotal = txNewTotal
+			rxTotal = rxNewTotal
 		}
 	}
 }
 
-func connectAndSendUpdates() {
+func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64) {
 	ws, err := websocket.Dial("ws://localhost:5000/ws", "", "http://localhost/")
 	if err != nil {
 		log.Println(err)
@@ -44,34 +69,47 @@ func connectAndSendUpdates() {
 
 	ticker := time.NewTicker(time.Second)
 
-	var m message
-	for {
-		err = websocket.JSON.Receive(ws, &m)
-		if err != nil {
-			switch err {
-			case io.EOF:
+	m := message{
+		Action: "updateLocation",
+		Data: map[string]interface{}{
+			"latlng": []float64{
+				37.7812681,
+				-122.4075934,
+			},
+			"accuracy": 31,
+		},
+	}
+	jsonBytes, err := json.Marshal(&m)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-			default:
-				log.Println("err = websocket.JSON.Receive(ws, &m):", err)
+	go func() {
+		var rxm message
+		for {
+			err = websocket.JSON.Receive(ws, &rxm)
+			if err != nil {
+				switch err {
+				case io.EOF:
+
+				default:
+					log.Println("err = websocket.JSON.Receive(ws, &m):", err)
+				}
+				break
 			}
-			break
+
+			atomic.AddUint64(rxCountP, 1)
 		}
+	}()
 
-		// log.Println("Received message:", m.Action)
-		// log.Printf("%+v\n", m.Data)
-
+	for {
 		select {
 		case <-ticker.C:
-			websocket.JSON.Send(ws, message{
-				Action: "updateLocation",
-				Data: map[string]interface{}{
-					"latlng": []float64{
-						37.7812681,
-						-122.4075934,
-					},
-					"accuracy": 31,
-				},
-			})
+			_, err := ws.Write(jsonBytes)
+			if err != nil {
+				log.Println(err)
+			}
+			atomic.AddUint64(txCountP, 1)
 		}
 	}
 
