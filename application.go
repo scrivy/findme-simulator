@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 type message struct {
 	Action string      `json:"action"`
 	Data   interface{} `json:"data"`
+	Date   time.Time
 }
 
 type location struct {
@@ -24,9 +27,7 @@ type location struct {
 }
 
 func main() {
-	var txCount, rxCount, txTotal, rxTotal uint64
-
-	var n int
+	var n int // number of concurent connections
 	if len(os.Args) == 2 {
 		num, err := strconv.Atoi(os.Args[1])
 		if err != nil {
@@ -37,30 +38,36 @@ func main() {
 		n = 100
 	}
 
+	var txCount, rxCount, latency uint64
 	for i := 0; i < n; i++ {
 		time.Sleep(time.Duration(1000/n) * time.Millisecond)
-		go connectAndSendUpdates(&txCount, &rxCount)
+		go connectAndSendUpdates(&txCount, &rxCount, &latency)
 	}
 
-	var interval uint64
+	go func() {
+		log.Println(http.ListenAndServe("localhost:5050", nil))
+	}()
+
+	var interval, seconds uint64
 	interval = 5
+	seconds = interval
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	var tmpRxCount uint64
 	for {
 		select {
 		case <-ticker.C:
-			txNewTotal := atomic.LoadUint64(&txCount)
-			rxNewTotal := atomic.LoadUint64(&rxCount)
+			tmpRxCount = atomic.LoadUint64(&rxCount)
 			log.Printf(
-				"\n%6d tx msg / sec\n%6d rx msg / sec",
-				(txNewTotal-txTotal)/interval,
-				(rxNewTotal-rxTotal)/interval)
-			txTotal = txNewTotal
-			rxTotal = rxNewTotal
+				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ns latency",
+				atomic.LoadUint64(&txCount)/seconds,
+				tmpRxCount/seconds,
+				uint64(atomic.LoadUint64(&latency))/tmpRxCount)
+			seconds += interval
 		}
 	}
 }
 
-func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64) {
+func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) {
 	ws, err := websocket.Dial("ws://localhost:5000/ws", "", "http://localhost/")
 	if err != nil {
 		log.Println(err)
@@ -86,6 +93,7 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64) {
 
 	go func() {
 		var rxm message
+		var duration time.Duration
 		for {
 			err = websocket.JSON.Receive(ws, &rxm)
 			if err != nil {
@@ -98,7 +106,10 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64) {
 				break
 			}
 
+			duration = time.Since(rxm.Date)
+			atomic.AddUint64(latency, uint64(duration.Nanoseconds()))
 			atomic.AddUint64(rxCountP, 1)
+
 		}
 	}()
 
