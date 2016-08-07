@@ -3,15 +3,17 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
 
 type message struct {
@@ -52,25 +54,31 @@ func main() {
 	interval = 5
 	seconds = interval
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
-	var tmpRxCount uint64
+	var tmpRxCount, thisLatency uint64
 	for {
 		select {
 		case <-ticker.C:
 			tmpRxCount = atomic.LoadUint64(&rxCount)
+			thisLatency = uint64(atomic.LoadUint64(&latency)) / tmpRxCount
+
 			log.Printf(
 				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ns latency",
 				atomic.LoadUint64(&txCount)/seconds,
 				tmpRxCount/seconds,
-				uint64(atomic.LoadUint64(&latency))/tmpRxCount)
+				thisLatency)
+			if thisLatency > 1000000000 {
+				log.Panicln("Exceded 1s latency")
+			}
 			seconds += interval
 		}
 	}
 }
 
 func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) {
-	ws, err := websocket.Dial("ws://localhost:5000/ws", "", "http://localhost/")
+	dialer := websocket.Dialer{}
+	conn, _, err := dialer.Dial("ws://localhost:5000/ws", nil)
 	if err != nil {
-		log.Println(err)
+		logErr(err)
 		return
 	}
 
@@ -94,34 +102,49 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) 
 	go func() {
 		var rxm message
 		var duration time.Duration
+		var rxJsonBytes []byte
 		for {
-			err = websocket.JSON.Receive(ws, &rxm)
+			messageType, r, err := conn.NextReader()
 			if err != nil {
 				switch err {
 				case io.EOF:
-
 				default:
-					log.Println("err = websocket.JSON.Receive(ws, &m):", err)
+					logErr(err)
 				}
 				break
 			}
 
-			duration = time.Since(rxm.Date)
-			atomic.AddUint64(latency, uint64(duration.Nanoseconds()))
-			atomic.AddUint64(rxCountP, 1)
+			switch messageType {
+			case websocket.TextMessage:
+				rxJsonBytes, err = ioutil.ReadAll(r)
+				if err != nil {
+					logErr(err)
+					continue
+				}
 
+				json.Unmarshal(rxJsonBytes, &rxm)
+
+				duration = time.Since(rxm.Date)
+				atomic.AddUint64(latency, uint64(duration.Nanoseconds()))
+				atomic.AddUint64(rxCountP, 1)
+			}
 		}
 	}()
 
 	for {
 		select {
 		case <-ticker.C:
-			_, err := ws.Write(jsonBytes)
+			err = conn.WriteMessage(websocket.TextMessage, jsonBytes)
 			if err != nil {
-				log.Println(err)
+				logErr(err)
 			}
 			atomic.AddUint64(txCountP, 1)
 		}
 	}
 
+}
+
+func logErr(err error) {
+	log.Println(err)
+	debug.PrintStack()
 }
