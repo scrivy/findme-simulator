@@ -59,14 +59,14 @@ func main() {
 		select {
 		case <-ticker.C:
 			tmpRxCount = atomic.LoadUint64(&rxCount)
-			thisLatency = uint64(atomic.LoadUint64(&latency)) / tmpRxCount
+			thisLatency = uint64(atomic.LoadUint64(&latency)) / tmpRxCount / 1000000
 
 			log.Printf(
-				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ns latency",
+				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ms latency",
 				atomic.LoadUint64(&txCount)/seconds,
 				tmpRxCount/seconds,
 				thisLatency)
-			if thisLatency > 1000000000 {
+			if thisLatency > 1000 {
 				log.Panicln("Exceded 1s latency")
 			}
 			seconds += interval
@@ -103,6 +103,7 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) 
 		var rxm message
 		var duration time.Duration
 		var rxJsonBytes []byte
+	Read:
 		for {
 			messageType, r, err := conn.NextReader()
 			if err != nil {
@@ -119,7 +120,7 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) 
 				rxJsonBytes, err = ioutil.ReadAll(r)
 				if err != nil {
 					logErr(err)
-					continue
+					break Read
 				}
 
 				json.Unmarshal(rxJsonBytes, &rxm)
@@ -131,12 +132,14 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) 
 		}
 	}()
 
+Write:
 	for {
 		select {
 		case <-ticker.C:
 			err = conn.WriteMessage(websocket.TextMessage, jsonBytes)
 			if err != nil {
 				logErr(err)
+				break Write
 			}
 			atomic.AddUint64(txCountP, 1)
 		}
