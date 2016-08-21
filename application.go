@@ -28,6 +28,8 @@ type location struct {
 	Accuracy float64   `json:"accuracy"`
 }
 
+var jsonBytes []byte
+
 func main() {
 	var n int // number of concurent connections
 	if len(os.Args) == 2 {
@@ -38,6 +40,21 @@ func main() {
 		n = num
 	} else {
 		n = 100
+	}
+
+	var err error
+	jsonBytes, err = json.Marshal(message{
+		Action: "updateLocation",
+		Data: map[string]interface{}{
+			"latlng": []float64{
+				37.7812681,
+				-122.4075934,
+			},
+			"accuracy": 31,
+		},
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	var txCount, rxCount, latency uint64
@@ -83,21 +100,6 @@ func connectAndSendUpdates(txCountP *uint64, rxCountP *uint64, latency *uint64) 
 	}
 
 	ticker := time.NewTicker(time.Second)
-
-	m := message{
-		Action: "updateLocation",
-		Data: map[string]interface{}{
-			"latlng": []float64{
-				37.7812681,
-				-122.4075934,
-			},
-			"accuracy": 31,
-		},
-	}
-	jsonBytes, err := json.Marshal(&m)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	go func() {
 		var rxm message
