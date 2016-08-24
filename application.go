@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/shirou/gopsutil/cpu"
 )
 
 type message struct {
@@ -78,8 +80,8 @@ func main() {
 			tmpRxCount = atomic.LoadUint64(&rxCount)
 			thisLatency = uint64(atomic.LoadUint64(&latency)) / tmpRxCount / 1000000
 
-			log.Printf(
-				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ms latency",
+			fmt.Printf(
+				"\n%6d tx msg / sec\n%6d rx msg / sec\n%6d ms latency\n",
 				atomic.LoadUint64(&txCount)/seconds,
 				tmpRxCount/seconds,
 				thisLatency)
@@ -87,6 +89,13 @@ func main() {
 				log.Panicln("Exceded 1s latency")
 			}
 			seconds += interval
+
+			timesArr, err := cpu.Times(false)
+			if err != nil {
+				log.Fatal(err)
+			}
+			times := timesArr[0]
+			fmt.Printf("%6.0f user cpu\n%6.0f system cpu\n%6.0f idle cpu\n", times.User, times.System, times.Idle)
 		}
 	}
 }
