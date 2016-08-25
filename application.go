@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/mem"
 )
 
 type message struct {
@@ -96,6 +97,12 @@ func main() {
 			}
 			times := timesArr[0]
 			fmt.Printf("%6.0f user cpu\n%6.0f system cpu\n%6.0f idle cpu\n", times.User, times.System, times.Idle)
+
+			virtMem, err := mem.VirtualMemory()
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Printf("%d used mem\n", virtMem.Used)
 		}
 	}
 }
