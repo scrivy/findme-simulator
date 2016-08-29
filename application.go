@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/shirou/gopsutil/cpu"
 	"github.com/shirou/gopsutil/mem"
+	"github.com/shirou/gopsutil/net"
 )
 
 type message struct {
@@ -70,9 +71,18 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:5050", nil))
 	}()
 
-	var interval, seconds uint64
+
+	counters, err := net.IOCounters(true)
+	if err != nil {
+		log.Fatal(err)
+	}
+	lo := counters[0]
+
+	var interval, seconds, prevBytesSent, prevBytesRecv uint64
 	interval = 5
 	seconds = interval
+	prevBytesSent = lo.BytesSent
+	prevBytesRecv = lo.BytesRecv
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	var tmpRxCount, thisLatency uint64
 	for {
@@ -91,18 +101,29 @@ func main() {
 			}
 			seconds += interval
 
-			timesArr, err := cpu.Times(false)
+			timesArr, err := cpu.Percent(0, false)
 			if err != nil {
 				log.Fatal(err)
 			}
 			times := timesArr[0]
-			fmt.Printf("%6.0f user cpu\n%6.0f system cpu\n%6.0f idle cpu\n", times.User, times.System, times.Idle)
+			fmt.Printf("%6.1f cpu used\n", times)
 
 			virtMem, err := mem.VirtualMemory()
 			if err != nil {
 				log.Fatal(err)
 			}
-			fmt.Printf("%d used mem\n", virtMem.Used)
+			fmt.Printf("%6d mB used mem\n", virtMem.Used / 1000000)
+
+			counters, err = net.IOCounters(true)
+			if err != nil {
+				log.Fatal(err)
+			}
+			lo = counters[0]
+			fmt.Printf("%6d kB tx / sec \n", (lo.BytesSent - prevBytesSent)/5000)
+			fmt.Printf("%6d kB rx / sec \n", (lo.BytesRecv - prevBytesRecv)/5000)
+
+			prevBytesSent = lo.BytesSent
+			prevBytesRecv = lo.BytesRecv
 		}
 	}
 }
